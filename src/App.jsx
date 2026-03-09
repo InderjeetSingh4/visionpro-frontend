@@ -97,10 +97,9 @@ function AuthGuard({ isDarkMode }) {
     const hash = window.location.hash;
     const isJustVerified = hash.includes('type=signup');
 
-    // If they just came from the verification email, force a logout to make them sign in manually
     if (isJustVerified) {
         supabase.auth.signOut().then(() => {
-            window.history.replaceState(null, '', window.location.pathname); // Clears the hash
+            window.history.replaceState(null, '', window.location.pathname);
             setSuccessMsg("Email verified successfully! Please enter your credentials to log in.");
             setIsLoginMode(true);
         });
@@ -202,8 +201,15 @@ function WorkspaceGuard({ isDarkMode }) {
   const [isRefreshing, setIsRefreshing] = useState(false);
   
   const [pairingSession] = useState(() => Math.random().toString(36).substring(7));
-  const [localIp, setLocalIp] = useState(window.location.hostname !== 'localhost' ? window.location.hostname : '192.168.x.x'); 
-  const qrUrl = `http://${localIp}:5173/?companion=true&session=${pairingSession}&ip=${localIp}`;
+  
+  // 🟢 NEW: Auto-detects if running locally or live on Vercel
+  const isLocalHost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
+  const [localIp, setLocalIp] = useState(isLocalHost ? '192.168.x.x' : window.location.hostname); 
+  
+  // 🟢 NEW: Generates the correct QR link automatically
+  const qrUrl = isLocalHost 
+    ? `http://${localIp}:5173/?companion=true&session=${pairingSession}`
+    : `${window.location.origin}/?companion=true&session=${pairingSession}`;
 
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
@@ -608,15 +614,19 @@ function WorkspaceGuard({ isDarkMode }) {
                 <div className="w-12 h-12 sm:w-16 sm:h-16 bg-[#1D1D1F] dark:bg-white rounded-[1rem] sm:rounded-[1.25rem] flex items-center justify-center text-white dark:text-[#1D1D1F] mb-6 mx-auto shadow-lg"><Wifi size={24} className="sm:w-7 sm:h-7" strokeWidth={1.5} /></div>
                 <h2 className="text-lg sm:text-xl font-bold tracking-tight text-[#1D1D1F] dark:text-white mb-2">Connect Mobile Node</h2>
                 
+                {isLocalHost && (
                 <div className="text-left mb-6 mt-6">
                     <label className="text-[10px] font-bold text-slate-500 uppercase tracking-widest mb-2 block text-center">Your Local IPv4 Address</label>
                     <input type="text" value={localIp} onChange={e => setLocalIp(e.target.value)} className="w-full bg-white dark:bg-black/20 border border-slate-200 dark:border-white/10 rounded-xl px-4 py-3 text-xs font-bold outline-none focus:ring-2 focus:ring-[#1D1D1F] dark:focus:ring-white transition-all text-center tracking-widest" placeholder="e.g. 192.168.1.50" />
                 </div>
+                )}
 
-                <div className="bg-white p-3 sm:p-4 rounded-[1.5rem] sm:rounded-3xl shadow-inner inline-block border border-slate-200">
+                <div className={`bg-white p-3 sm:p-4 rounded-[1.5rem] sm:rounded-3xl shadow-inner inline-block border border-slate-200 ${!isLocalHost ? 'mt-6' : ''}`}>
                     <img src={`https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(qrUrl)}`} alt="QR Code" className="w-[150px] h-[150px] sm:w-[180px] sm:h-[180px]" />
                 </div>
-                <p className="text-[9px] sm:text-[10px] font-bold text-slate-500 dark:text-zinc-400 mt-6 uppercase tracking-widest leading-relaxed">Android Note: Connect via Wi-Fi</p>
+                <p className="text-[9px] sm:text-[10px] font-bold text-slate-500 dark:text-zinc-400 mt-6 uppercase tracking-widest leading-relaxed">
+                    {isLocalHost ? "Android Note: Connect via Wi-Fi" : "Scan to connect your mobile lens."}
+                </p>
             </motion.div>
         </motion.div>
       )}</AnimatePresence>
