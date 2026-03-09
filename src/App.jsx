@@ -4,8 +4,8 @@ import Tilt from 'react-parallax-tilt';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from './supabaseClient';
 
-// 🟢 YOUR ACTIVE TUNNEL LINK
-const BACKEND_URL = "https://lemon-aliens-live.loca.lt";
+// 🟢 YOUR LIVE NGROK TUNNEL LINK IS HARDCODED HERE
+const BACKEND_URL = "https://illiquid-unappended-agnes.ngrok-free.dev";
 
 const TrackedPanel = ({ children, className, isDarkMode }) => {
   const handleMouseMove = (e) => {
@@ -65,7 +65,10 @@ const CompanionMode = ({ sessionId, hostIp }) => {
           const res = await fetch(`${BACKEND_URL}/api/detect/image`, { 
               method: 'POST', 
               body: fd,
-              headers: { "Bypass-Tunnel-Reminder": "true" }
+              headers: { 
+                  "Bypass-Tunnel-Reminder": "true",
+                  "ngrok-skip-browser-warning": "true" 
+              }
           });
           if (res.ok) {
             const data = await res.json();
@@ -205,12 +208,11 @@ function App() {
 
   const handleSignOut = async () => { stopCamera(); await supabase.auth.signOut(); };
 
-  // 🟢 THE BRUTE FORCE DOM ATTACHMENT FIX
   const startCamera = async () => {
     try {
       setMode('live');
       setIsRemoteActive(false);
-      setIsCameraActive(true); // Removes the overlay instantly
+      setIsCameraActive(true); 
       setFile(null); 
       setOriginalPreview(null); 
       setResultImage(null); 
@@ -219,10 +221,9 @@ function App() {
 
       const stream = await navigator.mediaDevices.getUserMedia({ 
           video: { width: { ideal: 1280 }, height: { ideal: 720 } }, 
-          audio: false // Critical for Mac Chrome
+          audio: false 
       });
 
-      // Give React a tiny fraction of a second to render the box, then blast the stream into it
       setTimeout(() => {
           if (videoRef.current) {
               videoRef.current.srcObject = stream;
@@ -266,7 +267,10 @@ function App() {
         const response = await fetch(`${BACKEND_URL}/api/detect/image`, { 
             method: 'POST', 
             body: formData,
-            headers: { "Bypass-Tunnel-Reminder": "true" }
+            headers: { 
+                "Bypass-Tunnel-Reminder": "true",
+                "ngrok-skip-browser-warning": "true"
+            }
         });
         if (response.ok) {
             const data = await response.json();
@@ -337,7 +341,10 @@ function App() {
       const response = await fetch(endpoint, { 
           method: 'POST', 
           body: formData,
-          headers: { "Bypass-Tunnel-Reminder": "true" }
+          headers: { 
+              "Bypass-Tunnel-Reminder": "true",
+              "ngrok-skip-browser-warning": "true"
+          }
       });
       const data = await response.json();
       if (response.ok) {
@@ -553,7 +560,6 @@ function App() {
                                 <div className="flex-1 w-full h-full bg-[#1D1D1F] dark:bg-black rounded-[1.2rem] sm:rounded-[1.5rem] relative overflow-hidden flex items-center justify-center shadow-inner">
                                     <canvas ref={canvasRef} className="hidden" />
                                     
-                                    {/* 🟢 PURE BRUTE FORCE DOM ASSIGNMENT - NO TRICKS */}
                                     <video 
                                         ref={videoRef} 
                                         autoPlay 
@@ -562,7 +568,6 @@ function App() {
                                         className="absolute inset-0 w-full h-full object-cover z-0" 
                                     />
                                     
-                                    {/* OVERLAY SITS ON TOP IF INACTIVE */}
                                     {!isCameraActive && !isRemoteActive && (
                                         <div className="absolute inset-0 z-10 flex flex-col items-center justify-center bg-[#1D1D1F] dark:bg-black">
                                             <Camera size={40} className="mx-auto mb-3 sm:mb-4 text-white/30 sm:w-12 sm:h-12" strokeWidth={1.5} />
