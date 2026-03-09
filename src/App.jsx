@@ -24,54 +24,88 @@ const TrackedPanel = ({ children, className, isDarkMode }) => {
 };
 
 // ==========================================
-// 🟢 MOBILE COMPANION MODE
+// 🟢 MOBILE COMPANION MODE (NOW LAG-FREE & REMOTE CONTROLLED)
 // ==========================================
 const CompanionMode = ({ sessionId, hostIp }) => {
   const videoRef = useRef(null);
   const canvasRef = useRef(null);
   const [status, setStatus] = useState('Initializing Lens...');
   const [channel, setChannel] = useState(null);
+  
+  // Ref to hold whether the PC told us to analyze
+  const isAnalyzingRef = useRef(false);
 
   useEffect(() => {
     const newChannel = supabase.channel(`room_${sessionId}`);
+    
+    // Listen for PC Start/Stop commands
+    newChannel.on('broadcast', { event: 'control' }, ({ payload }) => {
+        if (payload.action === 'start') {
+            isAnalyzingRef.current = true;
+            setStatus('Analyzing stream... (Active)');
+        } else if (payload.action === 'stop') {
+            isAnalyzingRef.current = false;
+            setStatus('Streaming to Mainframe... (Ready)');
+        }
+    });
+
     newChannel.subscribe((state) => { if (state === 'SUBSCRIBED') setChannel(newChannel); });
     return () => { supabase.removeChannel(newChannel); }
   }, [sessionId]);
 
   useEffect(() => {
     if (!channel) return;
+    let isActive = true;
+
     navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false })
       .then(stream => {
-        if(videoRef.current) { videoRef.current.srcObject = stream; videoRef.current.play(); setStatus('Streaming to Mainframe...'); }
+        if(videoRef.current) { 
+            videoRef.current.srcObject = stream; 
+            videoRef.current.play(); 
+            setStatus('Streaming to Mainframe... (Ready)'); 
+        }
       }).catch(err => { setStatus('ERROR: Browser blocked camera.'); });
 
-    const interval = setInterval(() => {
-      if (!videoRef.current || !canvasRef.current) return;
-      const canvas = canvasRef.current;
-      const ctx = canvas.getContext('2d', { willReadFrequently: true });
-      canvas.width = 640; canvas.height = 360;
-      ctx.drawImage(videoRef.current, 0, 0, 640, 360);
-      
-      canvas.toBlob(async (blob) => {
-        if (!blob) return;
-        const fd = new FormData(); fd.append('file', blob, 'live_frame.jpg');
+    // The Smart Loop (No setInterval, completely lag-free)
+    const processFrame = async () => {
+      if (!isActive) return;
+
+      if (isAnalyzingRef.current && videoRef.current && canvasRef.current) {
+        const canvas = canvasRef.current;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        
+        // Lower resolution specifically for the backend to prevent lag
+        canvas.width = 480; 
+        canvas.height = 270;
+        ctx.drawImage(videoRef.current, 0, 0, 480, 270);
+        
         try {
-          const res = await fetch(`${BACKEND_URL}/api/detect/image`, { method: 'POST', body: fd, headers: { "Bypass-Tunnel-Reminder": "true", "ngrok-skip-browser-warning": "true" }});
-          if (res.ok) {
-            const data = await res.json();
-            channel.send({ type: 'broadcast', event: 'frame', payload: { image: data.image, metrics: { latency: data.latency, detections: data.detections } } });
+          const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/jpeg', 0.6));
+          if (blob) {
+            const fd = new FormData(); fd.append('file', blob, 'live_frame.jpg');
+            const res = await fetch(`${BACKEND_URL}/api/detect/image`, { method: 'POST', body: fd, headers: { "Bypass-Tunnel-Reminder": "true", "ngrok-skip-browser-warning": "true" }});
+            if (res.ok) {
+              const data = await res.json();
+              channel.send({ type: 'broadcast', event: 'frame', payload: { image: data.image, metrics: { latency: data.latency, detections: data.detections } } });
+            }
           }
         } catch (e) {}
-      }, 'image/jpeg', 0.5);
-    }, 200);
-    return () => clearInterval(interval);
-  }, [channel, hostIp]);
+      }
+      
+      // Waits for the current frame to completely finish before starting the next one
+      setTimeout(processFrame, 150);
+    };
+
+    processFrame(); // Start the smart loop
+
+    return () => { isActive = false; };
+  }, [channel]);
 
   return (
     <div className="min-h-screen bg-[#09090b] text-white flex flex-col items-center justify-center p-6 text-center font-sans">
         <Sparkles size={40} className="mb-6 text-slate-300 animate-pulse" />
         <h1 className="text-xl sm:text-2xl font-bold mb-2 tracking-tight">VisionPro Edge Node</h1>
-        <p className={`text-[10px] font-bold uppercase tracking-widest mb-10 ${status.includes('ERROR') ? 'text-red-500' : 'text-slate-400'}`}>{status}</p>
+        <p className={`text-[10px] font-bold uppercase tracking-widest mb-10 ${status.includes('ERROR') ? 'text-red-500' : (status.includes('Active') ? 'text-emerald-400' : 'text-slate-400')}`}>{status}</p>
         <div className="relative w-full max-w-sm rounded-[2.5rem] overflow-hidden border border-white/10 shadow-[0_0_50px_rgba(255,255,255,0.1)]">
             <video ref={videoRef} playsInline muted autoPlay className="w-full h-auto object-cover scale-105" />
         </div>
@@ -202,11 +236,9 @@ function WorkspaceGuard({ isDarkMode }) {
   
   const [pairingSession] = useState(() => Math.random().toString(36).substring(7));
   
-  // 🟢 NEW: Auto-detects if running locally or live on Vercel
   const isLocalHost = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1';
   const [localIp, setLocalIp] = useState(isLocalHost ? '192.168.x.x' : window.location.hostname); 
   
-  // 🟢 NEW: Generates the correct QR link automatically
   const qrUrl = isLocalHost 
     ? `http://${localIp}:5173/?companion=true&session=${pairingSession}`
     : `${window.location.origin}/?companion=true&session=${pairingSession}`;
@@ -218,6 +250,7 @@ function WorkspaceGuard({ isDarkMode }) {
   const recordedChunksRef = useRef([]);
   const logsEndRef = useRef(null);
   const isProcessingRef = useRef(false); 
+  const channelRef = useRef(null); // Keeps track of the active connection
   
   const [systemLogs, setSystemLogs] = useState([{ id: 1, time: new Date().toLocaleTimeString(), msg: 'System initialized.' }]);
   const addLog = (msg) => { setSystemLogs(prev => [...prev, { id: Date.now(), time: new Date().toLocaleTimeString(), msg }].slice(-15)); };
@@ -235,15 +268,19 @@ function WorkspaceGuard({ isDarkMode }) {
   }, [navigate]);
 
   useEffect(() => {
-      const channel = supabase.channel(`room_${pairingSession}`)
-      .on('broadcast', { event: 'frame' }, ({ payload }) => {
-          if (mode !== 'live') setMode('live');
-          if (isCameraActive) setIsCameraActive(false);
-          if (!isRemoteActive) { setIsRemoteActive(true); addLog("Mobile connection established."); }
-          setResultImage(payload.image); setMetrics(payload.metrics);
+      const channel = supabase.channel(`room_${pairingSession}`);
+      channelRef.current = channel;
+      
+      channel.on('broadcast', { event: 'frame' }, ({ payload }) => {
+          setMode('live');
+          setIsCameraActive(false);
+          setIsRemoteActive(true);
+          setResultImage(payload.image); 
+          setMetrics(payload.metrics);
       }).subscribe();
-      return () => { supabase.removeChannel(channel); }
-  }, [pairingSession, mode, isCameraActive, isRemoteActive]);
+      
+      return () => { supabase.removeChannel(channel); channelRef.current = null; }
+  }, [pairingSession]);
 
   const fetchHistory = async (userId) => {
     const { data, error } = await supabase.from('detection_history').select('*').order('created_at', { ascending: false });
@@ -288,30 +325,46 @@ function WorkspaceGuard({ isDarkMode }) {
 
   const toggleLiveInference = () => {
     if (status === 'processing') {
-      clearInterval(streamIntervalRef.current); setStatus('idle'); addLog("Live analysis paused.");
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') mediaRecorderRef.current.stop();
-    } else {
-      setStatus('processing'); addLog("Live analysis started."); recordedChunksRef.current = [];
-      const stream = videoRef.current.srcObject;
-      if (stream) {
-        let options = { mimeType: 'video/webm' }; if (!MediaRecorder.isTypeSupported('video/webm')) options = { mimeType: 'video/mp4' };
-        try {
-            const mediaRecorder = new MediaRecorder(stream, options);
-            mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) recordedChunksRef.current.push(e.data); };
-            mediaRecorder.onstop = async () => {
-               const blob = new Blob(recordedChunksRef.current, { type: options.mimeType }); setResultVideo(URL.createObjectURL(blob));
-               const ext = options.mimeType.split('/')[1] || 'webm'; const fileName = `${session.user.id}/live_${Date.now()}.${ext}`;
-               const { error } = await supabase.storage.from('detections').upload(fileName, blob, { contentType: options.mimeType });
-               if (!error) {
-                  const { data: { publicUrl } } = supabase.storage.from('detections').getPublicUrl(fileName);
-                  await supabase.from('detection_history').insert([{ user_id: session.user.id, file_name: 'Live Session Capture', media_url: publicUrl, latency: metrics?.latency || 0, media_type: 'video' }]);
-                  fetchHistory(session.user.id);
-               }
-            };
-            mediaRecorderRef.current = mediaRecorder; mediaRecorder.start();
-        } catch(err) {}
+      setStatus('idle');
+      addLog("Live analysis paused.");
+      
+      // Tell phone to stop
+      if (isRemoteActive && channelRef.current) {
+        channelRef.current.send({ type: 'broadcast', event: 'control', payload: { action: 'stop' } });
+      } else {
+        clearInterval(streamIntervalRef.current);
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') mediaRecorderRef.current.stop();
       }
-      streamIntervalRef.current = setInterval(processLiveFrame, 150); 
+    } else {
+      setStatus('processing'); 
+      addLog("Live analysis started.");
+      
+      // Tell phone to start firing
+      if (isRemoteActive && channelRef.current) {
+        channelRef.current.send({ type: 'broadcast', event: 'control', payload: { action: 'start' } });
+      } else {
+        recordedChunksRef.current = [];
+        const stream = videoRef.current.srcObject;
+        if (stream) {
+            let options = { mimeType: 'video/webm' }; if (!MediaRecorder.isTypeSupported('video/webm')) options = { mimeType: 'video/mp4' };
+            try {
+                const mediaRecorder = new MediaRecorder(stream, options);
+                mediaRecorder.ondataavailable = (e) => { if (e.data.size > 0) recordedChunksRef.current.push(e.data); };
+                mediaRecorder.onstop = async () => {
+                   const blob = new Blob(recordedChunksRef.current, { type: options.mimeType }); setResultVideo(URL.createObjectURL(blob));
+                   const ext = options.mimeType.split('/')[1] || 'webm'; const fileName = `${session.user.id}/live_${Date.now()}.${ext}`;
+                   const { error } = await supabase.storage.from('detections').upload(fileName, blob, { contentType: options.mimeType });
+                   if (!error) {
+                      const { data: { publicUrl } } = supabase.storage.from('detections').getPublicUrl(fileName);
+                      await supabase.from('detection_history').insert([{ user_id: session.user.id, file_name: 'Live Session Capture', media_url: publicUrl, latency: metrics?.latency || 0, media_type: 'video' }]);
+                      fetchHistory(session.user.id);
+                   }
+                };
+                mediaRecorderRef.current = mediaRecorder; mediaRecorder.start();
+            } catch(err) {}
+        }
+        streamIntervalRef.current = setInterval(processLiveFrame, 150); 
+      }
     }
   };
 
@@ -414,12 +467,13 @@ function WorkspaceGuard({ isDarkMode }) {
                         </div>
                         
                         <div className="mt-auto">
-                            {mode === 'live' && !isRemoteActive ? (
-                                <button onClick={toggleLiveInference} disabled={!isCameraActive} className={`w-full py-5 rounded-2xl font-bold text-xs uppercase tracking-[0.2em] shadow-md transition-all ${isCameraActive ? (status === 'processing' ? 'bg-slate-700 dark:bg-slate-300 text-white dark:text-black' : 'bg-[#1D1D1F] dark:bg-white hover:bg-black dark:hover:bg-gray-200 text-white dark:text-[#1D1D1F] active:scale-95') : 'bg-slate-200 dark:bg-white/5 text-slate-400 cursor-not-allowed'}`}>
+                            {/* 🟢 Unified Start Analysis Button that works for BOTH phone and PC cam */}
+                            {mode === 'live' ? (
+                                <button onClick={toggleLiveInference} disabled={!isCameraActive && !isRemoteActive} className={`w-full py-5 rounded-2xl font-bold text-xs uppercase tracking-[0.2em] shadow-md transition-all ${ (isCameraActive || isRemoteActive) ? (status === 'processing' ? 'bg-slate-700 dark:bg-slate-300 text-white dark:text-black' : 'bg-[#1D1D1F] dark:bg-white hover:bg-black dark:hover:bg-gray-200 text-white dark:text-[#1D1D1F] active:scale-95') : 'bg-slate-200 dark:bg-white/5 text-slate-400 cursor-not-allowed'}`}>
                                     {status === 'processing' ? 'Stop Analysis' : 'Start Analysis'}
                                 </button>
                             ) : (
-                                <button onClick={handleUpload} disabled={(!file && !isRemoteActive) || status === 'processing'} className={`w-full py-5 rounded-2xl font-bold text-xs uppercase tracking-[0.2em] shadow-md transition-all ${file || isRemoteActive ? 'bg-[#1D1D1F] dark:bg-white hover:bg-black dark:hover:bg-gray-200 text-white dark:text-[#1D1D1F] active:scale-95' : 'bg-slate-200 dark:bg-white/5 text-slate-400 cursor-not-allowed'}`}>
+                                <button onClick={handleUpload} disabled={!file || status === 'processing'} className={`w-full py-5 rounded-2xl font-bold text-xs uppercase tracking-[0.2em] shadow-md transition-all ${file ? 'bg-[#1D1D1F] dark:bg-white hover:bg-black dark:hover:bg-gray-200 text-white dark:text-[#1D1D1F] active:scale-95' : 'bg-slate-200 dark:bg-white/5 text-slate-400 cursor-not-allowed'}`}>
                                     {status === 'processing' ? 'Analyzing...' : 'Execute Task'}
                                 </button>
                             )}
