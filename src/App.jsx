@@ -90,17 +90,33 @@ function AuthGuard({ isDarkMode }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [authError, setAuthError] = useState(null);
+  const [successMsg, setSuccessMsg] = useState(null);
   const [isAuthenticating, setIsAuthenticating] = useState(false);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => { if (session) navigate('/workspace'); });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => { if (session) navigate('/workspace'); });
+    const hash = window.location.hash;
+    const isJustVerified = hash.includes('type=signup');
+
+    // If they just came from the verification email, force a logout to make them sign in manually
+    if (isJustVerified) {
+        supabase.auth.signOut().then(() => {
+            window.history.replaceState(null, '', window.location.pathname); // Clears the hash
+            setSuccessMsg("Email verified successfully! Please enter your credentials to log in.");
+            setIsLoginMode(true);
+        });
+    } else {
+        supabase.auth.getSession().then(({ data: { session } }) => { if (session) navigate('/workspace'); });
+    }
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => { 
+        if (session && !window.location.hash.includes('type=signup')) navigate('/workspace'); 
+    });
     return () => subscription.unsubscribe();
   }, [navigate]);
 
   const handleAuth = async (e) => {
     e.preventDefault();
-    setIsAuthenticating(true); setAuthError(null);
+    setIsAuthenticating(true); setAuthError(null); setSuccessMsg(null);
     try {
       if (isLoginMode) {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -109,7 +125,7 @@ function AuthGuard({ isDarkMode }) {
         const { error } = await supabase.auth.signUp({ email, password });
         if (error) throw error;
         setIsLoginMode(true); setPassword('');
-        alert("Account created. Please log in.");
+        setSuccessMsg("Account created! Please check your email to verify.");
       }
     } catch (error) { setAuthError(error.message); } 
     finally { setIsAuthenticating(false); }
@@ -122,7 +138,7 @@ function AuthGuard({ isDarkMode }) {
             {['login', 'signup'].map((tab) => {
                 const isActive = tab === 'login' ? isLoginMode : !isLoginMode;
                 return (
-                    <button key={tab} onClick={() => { setIsLoginMode(tab === 'login'); setAuthError(null); }} className={`relative z-10 flex-1 py-3 text-xs font-bold rounded-xl transition-colors ${isActive ? 'text-white dark:text-[#1D1D1F]' : 'text-slate-500 hover:text-[#1D1D1F] dark:hover:text-white'}`}>
+                    <button key={tab} onClick={() => { setIsLoginMode(tab === 'login'); setAuthError(null); setSuccessMsg(null); }} className={`relative z-10 flex-1 py-3 text-xs font-bold rounded-xl transition-colors ${isActive ? 'text-white dark:text-[#1D1D1F]' : 'text-slate-500 hover:text-[#1D1D1F] dark:hover:text-white'}`}>
                         {isActive && <motion.div layoutId="auth-slider" className="absolute inset-0 bg-[#1D1D1F] dark:bg-white rounded-xl -z-10 shadow-sm" transition={{ type: "spring", stiffness: 500, damping: 30 }} />}
                         {tab === 'login' ? 'Log In' : 'Sign Up'}
                     </button>
@@ -145,6 +161,12 @@ function AuthGuard({ isDarkMode }) {
                     <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="flex items-start gap-2.5 bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 p-3.5 rounded-2xl text-left">
                         <AlertCircle size={16} className="text-red-500 shrink-0 mt-0.5"/>
                         <span className="text-[11px] font-semibold text-red-600 dark:text-red-400">{authError}</span>
+                    </motion.div>
+                )}
+                {successMsg && (
+                    <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }} exit={{ opacity: 0, height: 0 }} className="flex items-start gap-2.5 bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20 p-3.5 rounded-2xl text-left">
+                        <CheckCircle2 size={16} className="text-emerald-500 shrink-0 mt-0.5"/>
+                        <span className="text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">{successMsg}</span>
                     </motion.div>
                 )}
             </AnimatePresence>
@@ -199,11 +221,8 @@ function WorkspaceGuard({ isDarkMode }) {
       if (!session) { navigate('/auth'); } else { setSession(session); fetchHistory(session.user.id); }
     });
 
-    // 🟢 NEW: Instantly listens for the logout event and routes to Landing page
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-        if (event === 'SIGNED_OUT') {
-            navigate('/');
-        }
+        if (event === 'SIGNED_OUT') navigate('/');
     });
 
     return () => subscription.unsubscribe();
@@ -240,11 +259,10 @@ function WorkspaceGuard({ isDarkMode }) {
     setIsCameraActive(false); setStatus('idle'); setResultImage(null);
   };
 
-  // 🟢 NEW: The ultimate snappy Sign Out function
   const handleSignOut = async () => {
-    stopCamera(); // Make sure the webcam turns off
+    stopCamera();
     await supabase.auth.signOut();
-    navigate('/'); // Force redirect to Landing Page instantly
+    navigate('/');
   };
 
   const processLiveFrame = async () => {
@@ -328,23 +346,25 @@ function WorkspaceGuard({ isDarkMode }) {
 
   return (
     <div className="flex-1 flex flex-col relative z-20 h-screen overflow-hidden">
-      {/* 🟢 WORKSPACE NAVBAR */}
+      {/* 🟢 FULLY RESPONSIVE MOBILE NAVBAR */}
       <nav className="w-full border-b border-slate-200 dark:border-white/5 bg-white/40 dark:bg-black/20 backdrop-blur-3xl sticky top-0 z-50">
-          <div className="max-w-screen-2xl mx-auto px-4 sm:px-6 h-16 sm:h-20 flex items-center justify-between">
-          <div className="flex items-center gap-3 sm:gap-4">
+          <div className="max-w-screen-2xl mx-auto px-2 sm:px-6 h-16 sm:h-20 flex items-center justify-between">
+          
+          <div className="flex items-center gap-2 sm:gap-4 shrink-0">
               <div className="w-8 h-8 sm:w-10 sm:h-10 bg-[#1D1D1F] dark:bg-white rounded-lg sm:rounded-xl flex items-center justify-center text-white dark:text-[#1D1D1F] shadow-md">
                   <motion.div animate={{ rotate: 360 }} transition={{ repeat: Infinity, duration: 8, ease: "linear" }}><Sparkles size={16} className="sm:w-5 sm:h-5" /></motion.div>
               </div>
               <span className="font-bold text-lg sm:text-xl tracking-tight hidden sm:block text-[#1D1D1F] dark:text-white">Workspace</span>
           </div>
-          <div className="flex items-center gap-2 sm:gap-6 w-full justify-end sm:w-auto">
-              <button onClick={() => navigate('/')} className="flex items-center justify-center gap-2 px-3 py-2 text-slate-500 hover:text-[#1D1D1F] dark:hover:text-white transition-colors rounded-xl bg-white/40 dark:bg-white/5 border border-slate-200 dark:border-white/10 shadow-sm font-bold text-xs mr-2">
+
+          <div className="flex items-center gap-1 sm:gap-6 w-auto justify-end shrink-0 max-w-full overflow-hidden">
+              <button onClick={() => navigate('/')} className="flex items-center justify-center gap-2 px-2 sm:px-3 py-2 text-slate-500 hover:text-[#1D1D1F] dark:hover:text-white transition-colors rounded-xl bg-white/40 dark:bg-white/5 border border-slate-200 dark:border-white/10 shadow-sm font-bold text-xs shrink-0">
                   <Home size={16} /> <span className="hidden sm:block">Exit</span>
               </button>
 
-              <div className="flex bg-white/40 dark:bg-white/5 p-1 sm:p-1.5 rounded-lg sm:rounded-xl border border-slate-200 dark:border-white/10 relative shadow-inner overflow-x-auto no-scrollbar max-w-[200px] sm:max-w-none">
+              <div className="flex bg-white/40 dark:bg-white/5 p-1 sm:p-1.5 rounded-lg sm:rounded-xl border border-slate-200 dark:border-white/10 relative shadow-inner overflow-x-auto no-scrollbar shrink-0">
                   {['detection', 'dashboard', 'account'].map((tab) => (
-                      <button key={tab} onClick={() => setView(tab)} className={`shrink-0 relative z-10 w-20 sm:w-24 py-1.5 sm:py-2 text-[10px] sm:text-xs font-bold capitalize transition-colors ${view === tab ? 'text-white dark:text-[#1D1D1F]' : 'text-slate-500 hover:text-[#1D1D1F] dark:hover:text-white'}`}>
+                      <button key={tab} onClick={() => setView(tab)} className={`shrink-0 relative z-10 px-3 sm:px-6 py-1.5 sm:py-2 text-[10px] sm:text-xs font-bold capitalize transition-colors ${view === tab ? 'text-white dark:text-[#1D1D1F]' : 'text-slate-500 hover:text-[#1D1D1F] dark:hover:text-white'}`}>
                           {view === tab && <motion.div layoutId="nav-slider" className="absolute inset-0 bg-[#1D1D1F] dark:bg-white rounded-md sm:rounded-lg -z-10 shadow-md" transition={{ type: "spring", stiffness: 500, damping: 30 }} />}
                           {tab === 'detection' ? 'Engine' : tab === 'dashboard' ? 'Datasets' : 'Profile'}
                       </button>
