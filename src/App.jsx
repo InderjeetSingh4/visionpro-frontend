@@ -7,7 +7,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate, useNavigate, useLocat
 import Landing from './pages/Landing';
 
 // 🟢 YOUR LIVE NGROK TUNNEL LINK
-const BACKEND_URL = "https://illiquid-unappended-agnes.ngrok-free.dev";
+const BACKEND_URL = "https://tressie-petiolular-steely.ngrok-free.dev";
 
 const TrackedPanel = ({ children, className, isDarkMode }) => {
   const handleMouseMove = (e) => {
